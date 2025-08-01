@@ -12,12 +12,7 @@ import random
 import time
 import re
 
-# --- 1. Load Environment Variables ---
-load_dotenv()
-
-if not os.getenv("GROQ_API_KEY"):
-    st.error("GROQ_API_KEY environment variable not set! Please create a .env file.")
-    st.stop()
+os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
 # --- 2. Define Tools (UNCHANGED) ---
 
