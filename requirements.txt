@@ -12,7 +12,7 @@ comm==0.2.3
 debugpy==1.8.15
 decorator==5.2.1
 distro==1.9.0
-dotenv==0.9.9
+python-dotenv==1.1.1
 executing==2.2.0
 fatsecret==0.4.0
 gitdb==4.0.12
