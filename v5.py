@@ -38,6 +38,7 @@ def finalize_cart() -> str:
     return result
 
 
+# *** FIX: Updated tool prompt to enforce pricing and remove location references ***
 @tool
 def get_party_item_suggestions(occasion: Optional[str] = None, num_people: Optional[int] = None) -> str:
     """
@@ -53,8 +54,35 @@ def get_party_item_suggestions(occasion: Optional[str] = None, num_people: Optio
 
     planner_prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", "You are an expert party planner. Given a number of people and an occasion, suggest a list of common, easy-to-serve party snacks, platters, and drinks. You MUST calculate and include realistic quantities for each item to serve the specified number of guests."),
-            ("human", "Please generate a list of general party food and drinks with scaled quantities for the following event:\n\nOccasion: {occasion}\nNumber of People: {people}")
+(
+    "system",
+    """
+You are an expert party planner limited to suggesting only items commonly found in supermarkets. Your task is to recommend general, easy-to-serve party snacks, platters, and drinks for a given number of guests and occasion.
+
+You MUST:
+1. Calculate **realistic quantities** of each item based on the number of guests.
+2. Assign a **reliable, unit price in USD ($)** for each item.
+3. Calculate the **Total Cost** for all guests for each item.
+4. If a promotion exists (using `get_promotions_and_deals`), apply it to the pricing and mention it beside the item.
+
+You MUST NOT:
+- Mention "US supermarkets" or "prices may vary by location/store."
+- Make up fictional items or prices.
+
+Use this exact format for each item:
+<Item> – <Unit Price>$ (<Qty per guest> per guest) – <Total Cost>$ (for <number of guests> guests)
+(Optional Deal: **<deal text>**)
+"""
+),
+(
+    "human",
+    """
+Please generate a list of supermarket-available party food and drinks with scaled quantities and accurate pricing for the following event:
+
+Occasion: {occasion}
+Number of People: {people}
+"""
+)
         ]
     )
     planner_llm = ChatGroq(model="llama3-70b-8192", temperature=0.5)
@@ -64,6 +92,7 @@ def get_party_item_suggestions(occasion: Optional[str] = None, num_people: Optio
     print(f"--- ✅ DEBUG: Tool `get_party_item_suggestions` returning plan: '{result}' ---\n")
     return result
 
+# *** FIX: Updated tool prompt to enforce pricing and remove location references ***
 @tool
 def get_meal_plan_and_quantities(dish_names: List[str], num_people: int) -> str:
     """
@@ -73,8 +102,36 @@ def get_meal_plan_and_quantities(dish_names: List[str], num_people: int) -> str:
     print(f"\n--- 🛠️ DEBUG: Executing specialized tool `get_meal_plan_and_quantities` for {num_people} people. ---")
     planner_prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", "You are an expert chef. Your task is to create a practical supermarket shopping list. Given a list of dishes and a number of people, calculate realistic quantities for each raw ingredient needed."),
-            ("human", "Please generate an ingredient list with quantities for the following meal:\n\nDishes: {dishes}\nNumber of People: {people}")
+  (
+    "system",
+    """
+You are an expert meal planner that only uses items available in supermarkets.
+
+You MUST:
+1. Calculate the **realistic quantity** of each item based on the number of guests.
+2. Assign a **reliable unit price in USD ($)** based on typical supermarket prices.
+3. Calculate the **total cost for all guests** for each item.
+4. If a promotion exists (using `get_promotions_and_deals`), apply it to the pricing and mention it beside the item.
+5. Do NOT provide recipes or cooking instructions.
+6. Do NOT suggest any ingredients that are not typically found in supermarkets.
+
+You MUST NOT:
+- Mention "US supermarkets" or "prices may vary by location/store."
+
+Use this exact format for each item:
+<Item> – <Unit Price>$ (<Qty per guest> per guest) – <Total Cost>$ (for <number of guests> guests)
+(Optional Deal: **<deal text>**)
+"""
+),
+(
+    "human",
+    """
+Please generate a supermarket ingredient list with scaled quantities and accurate pricing for the following meal:
+
+Dishes: {dishes}
+Number of People: {people}
+"""
+)
         ]
     )
     planner_llm = ChatGroq(model="llama3-70b-8192", temperature=0.3)
@@ -124,10 +181,18 @@ def get_promotions_and_deals(category: str) -> str:
     """
     print(f"\n--- 🛠️ DEBUG: Executing tool `get_promotions_and_deals` with category='{category}' ---")
     deals = {
-        "produce": "Buy one, get one free on all berries!", "bakery": "25% off all artisanal breads.",
-        "meat": "Family pack of chicken thighs for $5.99.", "pantry": "2 for $5 on all pasta sauces.",
-        "snacks": "$1 off any two bags of potato chips."
-    }
+    "produce": "Buy 1 get 1 free on organic strawberries and blueberries.",
+    "bakery": "Freshly baked sourdough and multigrain loaves – 30% off this weekend only.",
+    "meat": "Get a family-size pack of boneless chicken breasts for just $6.49 (3 lbs).",
+    "pantry": "Mix & match: 3 for $5 on select pasta sauces (Rao’s, Barilla, Classico).",
+    "snacks": "Buy 2 get 1 free on Doritos, Lays, and Ruffles party-size bags.",
+    "dairy": "Half-gallon almond and oat milks – just $2.99 each (was $4.49).",
+    "frozen": "Save $3 when you buy any 2 frozen pizzas (DiGiorno, Red Baron, Amy's).",
+    "beverages": "12-pack Coca-Cola or Pepsi – $5.99 with loyalty card (limit 2).",
+    "household": "Buy 2 get 1 free on paper towels and toilet paper (select brands).",
+    "breakfast": "Cereal blowout: 2 for $4 on Kellogg’s and General Mills varieties (12–18 oz)."
+}
+
     result = deals.get(category.lower(), "No specific deals for that category right now.")
     print(f"--- ✅ DEBUG: Tool `get_promotions_and_deals` returning: '{result}' ---\n")
     return result
@@ -137,38 +202,66 @@ def get_promotions_and_deals(category: str) -> str:
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], lambda x, y: x + y]
 
+# *** FIX: Updated SYSTEM_PROMPT to enforce tool usage for specific steps ***
 SYSTEM_PROMPT = """
 ### IDENTITY & CORE DIRECTIVE
-Your name is Super-Plan. You are a helpful and efficient AI assistant for a SUPERMARKET. Your primary goal is to help users plan for parties by suggesting items and managing their shopping lists.
+You are Shelf-help, a helpful and efficient AI assistant for a supermarket. Your primary goal is to help users plan for parties by suggesting items and managing their shopping list. You MUST follow a strict, logical flow.
 
-### MANDATORY PARTY PLANNING PROTOCOL
-This is your primary workflow when a user wants to plan a party. Follow it strictly.
-**Step 1: Initial Inquiry & Context Gathering.** Acknowledge the party and ask clarifying questions. You MUST get the **number of guests** and the **occasion**.
-**Step 2: Use the General Planner Tool (Default Action).** Once you have the number of guests and occasion, your FIRST action is to call the `get_party_item_suggestions` tool.
-**Step 3: Present General Suggestions.** After the tool returns a list of suggestions, your next response to the user **MUST** be the output from that tool's output. Display the full list of items from the tool's output, and then ask if they would like to add these items. Strictly do not reply only like 'list of party items', you must provide the list of items which you got from 'get_party_item_suggestions'
-**Step 4: The Meal "Off-Ramp".** After handling general items, ask an open-ended question like "Were you also thinking of preparing a more substantial hot meal?". **DO NOT** proceed to meal planning unless the user explicitly confirms.
+### MASTER CONTROL FLOW (ReAct Protocol)
 
-### CONDITIONAL MEAL PLANNING PROTOCOL (ONLY IF USER ASKS FOR A MEAL)
-- If the user says yes to a hot meal, ask them what specific dish(es) they'd like to make.
-- Once you have the dish name and the `num_people`, call the `get_meal_plan_and_quantities` tool.
-- After the tool returns a list of suggestions, your next response to the user **MUST** be the output from that tool's output. Display the full list of items from the tool's output, and then ask if they would like to add these items. Strictly do not reply only like 'list of party items', you must provide the list of items which you got from 'get_meal_plan_and_quantities' and ask for confirmation before using `manage_shopping_list`.
+**STATE: AWAITING_TASK**
+1.  **Goal:** Determine user's task (party planning, meal planning, or general assistance).
+2.  **Action:** Greet the user and ask about party planning.
 
-### FINALIZE CART PROTOCOL (For Regular Items)
-1. **Trigger:** This protocol is for finalizing the entire list of regular, off-the-shelf items. Use it when the user says **"proceed," "checkout," "finalize," "I'm done,"** or **"place the order"** in the context of their shopping list.
-2. **Action:** Acknowledge their request to finalize.
-3. **Tool Call:** You MUST call the `finalize_cart` tool. It takes no arguments.
-4. **Confirm:** Present the confirmation message from the tool to the user.
+**STATE: GATHERING_CONTEXT (Party Planning)**
+1.  **Goal:** Get the necessary information for party planning.
+2.  **Action:** You MUST ask for the **number of guests** and the **occasion**.
+3.  **Transition:** Once you have BOTH `num_people` AND `occasion`, transition to **STATE: GENERATING_SUGGESTIONS**.
 
-### OVERRIDE PROTOCOL: SPECIAL ORDERS (HIGH PRIORITY)
-1. **Trigger:** This protocol overrides all others if the user uses keywords like **"order a cake," "custom cake," "decorated cake."**
-2. **Action:** Immediately stop the general planning flow. Ask for the necessary details (flavor, size/servings, and specific writing).
-3. **Tool Call:** Once you have the details, you MUST call the `place_order` tool.
-4. **Confirm:** Present the confirmation message from the tool to the user.
+**STATE: GENERATING_SUGGESTIONS**
+1.  **Goal:** Generate a priced and scaled list of general party items.
+2.  **Action:** You MUST immediately call the `get_party_item_suggestions` tool. Provide the `num_people` and `occasion` you gathered. Do not talk to the user first. Your only output in this state is the tool call.
+3.  **Transition:** After the tool returns its result, transition to **STATE: PRESENTING_SUGGESTIONS**.
+
+**STATE: PRESENTING_SUGGESTIONS**
+1.  **Goal:** Show the user the generated list.
+2.  **Action:** Complete list of items from the tool's output. After the list, ask the user if they want to add the items to their shopping list.
+3.  **Transition:** Await user confirmation. If they confirm, use the `manage_shopping_list` tool. Then, ask the "hot meal" off-ramp question.
+
+### MEAL PLANNING PROTOCOL
+1. **Goal:** Plan a hot meal.
+2. **Action:** Ask for specific dish names. Once you have the dish name(s) and the `num_people`, you **MUST call the `get_meal_plan_and_quantities` tool.**
+3. **Presenting:** Present the resulting ingredient list verbatim and ask for confirmation before using `manage_shopping_list`.
+
+### FINALIZE CART PROTOCOL
+1. **Trigger:** User says "checkout," "proceed," "finalize," or "place the order" for regular items.
+2. **Action:** Acknowledge, then call the `finalize_cart` tool.
+
+### SPECIAL ORDER PROTOCOL (HIGH PRIORITY)
+1. **Trigger:** User asks for "custom cake," "order a cake," or similar.
+2. **Action:** Immediately stop current flow. Ask for details (flavor, size, writing).
+3. **Tool Call:** Call the `place_order` tool.
 
 ### CONVERSATIONAL RULES
+- **You MUST NOT generate your own lists of items.** Your ONLY source for suggestions is your tools.
 - **NEVER mention your "tools."** Speak naturally.
-- **Be Proactive with Deals:** If a user discusses items from a category that has a promotion, you can proactively use the `get_promotions_and_deals` tool and mention the deal.
+- **NEVER apologize for technical errors.** If confused, ask a clarifying question.
+- **Proactive Deals:** If discussing items from a category with a promotion, you can use `get_promotions_and_deals` proactively.
+- **Price Reliability:** Acknowledge that you are providing reliable estimates based on supermarket averages, but do not emphasize location or variability.
+
+---
+
+### TOOL SUMMARY FOR INTERNAL REASONING
+
+- `get_party_item_suggestions`: Get supermarket items for party (based on guests and occasion)
+- `get_meal_plan_and_quantities`: Get ingredient list for specified dishes and guest count
+- `get_promotions_and_deals`: Check for available deals per item category
+- `manage_shopping_list`: Add or remove items from the shopping list
+- `finalize_cart`: Finalize the entire cart when the user is done
+- `place_order`: Submit special/custom orders (e.g., cakes)
+
 """
+
 
 tools = [finalize_cart, get_party_item_suggestions, get_meal_plan_and_quantities, manage_shopping_list, place_order, get_promotions_and_deals]
 tool_node = ToolNode(tools)
@@ -200,21 +293,29 @@ app = workflow.compile()
 
 # --- 4. Streamlit User Interface (Robust Loop) ---
 
-st.set_page_config(page_title="🛒 AI Planning Agent", layout="wide")
-st.title("AI Shopping and Event Planner")
+st.set_page_config(page_title="🛒 Shelf-help", layout="wide")
+st.title("Shelf-help: Supermarket AI assistant")
 
 if "messages" not in st.session_state:
     st.session_state.messages = [
         SystemMessage(content=SYSTEM_PROMPT),
-        AIMessage(content="""Hello! I can certainly help with that. Here are this week's special offers:
+        AIMessage(content="""
+Hello! 👋 Here are this week's hot supermarket deals you won't want to miss:
 
-- **Produce:** Buy one, get one free on all berries!
-- **Bakery:** 25% off all artisanal breads.
-- **Meat:** Family pack of chicken thighs for $5.99.
-- **Pantry:** 2 for $5 on all pasta sauces.
-- **Snacks:** $1 off any two bags of potato chips.
+- 🥭 **Produce:** Buy 1 get 1 free on organic strawberries and blueberries.
+- 🥖 **Bakery:** Freshly baked sourdough and multigrain loaves – 30% off this weekend only.
+- 🍗 **Meat:** Family-size pack of boneless chicken breasts for just $6.49 (3 lbs).
+- 🥫 **Pantry:** Mix & match: 3 for $5 on select pasta sauces (Rao’s, Barilla, Classico).
+- 🍟 **Snacks:** Buy 2 get 1 free on Doritos, Lays, and Ruffles party-size bags.
+- 🥛 **Dairy:** Half-gallon almond and oat milks – just $2.99 each (was $4.49).
+- 🍕 **Frozen:** Save $3 when you buy any 2 frozen pizzas (DiGiorno, Red Baron, Amy's).
+- 🥤 **Beverages:** 12-pack Coca-Cola or Pepsi – $5.99 with loyalty card (limit 2).
+- 🧻 **Household:** Buy 2 get 1 free on paper towels and toilet paper (select brands).
+- 🥣 **Breakfast:** Cereal blowout: 2 for $4 on Kellogg’s and General Mills varieties (12–18 oz).
 
-How can I help you? I can assist with planning a party or finding more product details.""")
+Need help planning a party 🎉 or building your shopping list 🛒? Just let me know!
+"""
+)
     ]
 
 # Display all past messages
@@ -239,27 +340,28 @@ if prompt := st.chat_input("What would you like to plan?"):
             final_messages = response['messages']
             message_to_display = final_messages[-1]
 
-            # *** THE ONLY CHANGE IS HERE: The interception logic is now generalized for BOTH planning tools. ***
             if len(final_messages) > 2:
                 second_to_last = final_messages[-2]
                 last = final_messages[-1]
                 
-                # Check if the last action was a call to EITHER of our planning tools,
-                # followed by an unhelpful, short summary.
+                # Check for the specific failure condition: a successful tool call followed by a short, unhelpful AI summary.
                 if (isinstance(second_to_last, ToolMessage) and 
                     second_to_last.name in ['get_party_item_suggestions', 'get_meal_plan_and_quantities'] and 
                     isinstance(last, AIMessage) and
-                    len(last.content.split()) < 30): # Heuristic to catch summaries
+                    len(last.content.split()) < 30):
                     
-                    # CONSTRUCT THE CORRECT RESPONSE by combining the tool's detailed output
-                    # with the agent's (usually correct) follow-up question.
-                    full_list_from_tool = second_to_last.content
+                    full_list = second_to_last.content
                     follow_up_question = last.content
                     
-                    corrected_content = f"{full_list_from_tool}\n\n{follow_up_question}"
+                    # The prompt dictates a specific intro phrase
+                    if second_to_last.name == 'get_party_item_suggestions':
+                        intro_phrase = ""
+                    else:
+                        intro_phrase = ""
+
+                    corrected_content = f"{intro_phrase}\n\n{full_list}\n\n{follow_up_question}"
                     message_to_display = AIMessage(content=corrected_content)
 
-            # Display and save the (potentially corrected) final message
             if isinstance(message_to_display, AIMessage) and message_to_display.content:
                 st.session_state.messages.append(message_to_display)
                 st.write(message_to_display.content)
